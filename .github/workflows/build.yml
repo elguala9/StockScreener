@@ -61,10 +61,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Rinomina file con indicazione piattaforma
+        run: |
+          mkdir -p release-assets
+          cp artifacts/windows/stock-screener-gui.exe     release-assets/stock-screener-gui-win-x64.exe
+          cp artifacts/windows/stock-screener-cli.exe     release-assets/stock-screener-cli-win-x64.exe
+          cp artifacts/linux-fedora/stock-screener-gui    release-assets/stock-screener-gui-linux-x64
+          cp artifacts/linux-fedora-cli/stock-screener-cli release-assets/stock-screener-cli-linux-x64
       - name: Crea release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release-assets/*
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           draft: false
