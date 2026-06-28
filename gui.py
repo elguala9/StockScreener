@@ -10,13 +10,21 @@ import tkinter as tk
 
 import pandas as pd
 
-from screener.config import ScreenerConfig, SHORT_TO_LONG
+from screener.config import ScreenerConfig
 from screener.fetcher import fetch_all_tickers
 from screener.filters import filter_stocks
 from screener.indices import get_index_names, get_tickers_for_index, get_display_name
 from screener.providers import get_provider, get_provider_names
 
 logger = logging.getLogger(__name__)
+
+_SHORT_TO_LONG = {
+    "pe": "pe", "pb": "pb", "ps": "ps", "ev_ebitda": "ev_ebitda",
+    "fcf_yield": "fcf_yield", "op_margin": "operating_margin",
+    "net_margin": "net_margin", "roe": "roe", "roic": "roic",
+    "debt_equity": "debt_equity", "market_cap": "market_cap",
+    "div_yield": "dividend_yield", "rev_growth": "revenue_growth",
+}
 
 
 class StockScreenerGUI:
@@ -175,13 +183,6 @@ class StockScreenerGUI:
                     if hi is not None:
                         max_var.set(hi)
 
-    def _create_dummy_json(self):
-        dummy = {fld: {"min": 0, "max": 999} for fld in self._filter_entries}
-        path = Path(__file__).resolve().parent / "dummy_json"
-        with open(path, "w") as f:
-            json.dump(dummy, f, indent=4)
-        messagebox.showinfo("Dummy Default", f"Creato {path}")
-
     def _export_config(self):
         data = {}
         for fld, (min_var, max_var) in self._filter_entries.items():
@@ -233,8 +234,6 @@ class StockScreenerGUI:
         ttk.Button(frame, text="Export Conf", command=self._export_config).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(frame, text="Import Conf", command=self._import_config).pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Button(frame, text="Dummy Default", command=self._create_dummy_json).pack(side=tk.LEFT, padx=(0, 10))
-
         self.progress = ttk.Progressbar(frame, length=400, mode="determinate")
         self.progress.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
 
@@ -274,13 +273,18 @@ class StockScreenerGUI:
         self.result_label.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
 
     def _build_config_from_ui(self) -> ScreenerConfig:
-        data = {}
-        for short in SHORT_TO_LONG:
-            min_v, max_v = self._filter_entries.get(short, (None, None))
-            lo = float(min_v.get()) if min_v.get().strip() else None
-            hi = float(max_v.get()) if max_v.get().strip() else None
-            data[short] = (lo, hi)
-        return ScreenerConfig.from_filter_dict(data)
+        kwargs = {}
+        for short, (min_var, max_var) in self._filter_entries.items():
+            lo_s = min_var.get().strip()
+            hi_s = max_var.get().strip()
+            lo = float(lo_s) if lo_s else None
+            hi = float(hi_s) if hi_s else None
+            long_name = _SHORT_TO_LONG.get(short, short)
+            if lo is not None:
+                kwargs[f"{long_name}_min"] = lo
+            if hi is not None:
+                kwargs[f"{long_name}_max"] = hi
+        return ScreenerConfig(**kwargs)
 
     def _start_scan(self):
         if self._scanning:

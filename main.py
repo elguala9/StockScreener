@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import traceback
+from dataclasses import fields
 from pathlib import Path
 
 import pandas as pd
@@ -55,8 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ev-ebitda-max", type=float, help="EV/EBITDA massimo")
     parser.add_argument("--fcf-yield-min", type=float, help="FCF Yield minimo")
     parser.add_argument("--fcf-yield-max", type=float, help="FCF Yield massimo")
-    parser.add_argument("--op-margin-min", type=float, help="Margine operativo minimo")
-    parser.add_argument("--op-margin-max", type=float, help="Margine operativo massimo")
+    parser.add_argument("--operating-margin-min", type=float, help="Margine operativo minimo")
+    parser.add_argument("--operating-margin-max", type=float, help="Margine operativo massimo")
     parser.add_argument("--net-margin-min", type=float, help="Margine netto minimo")
     parser.add_argument("--net-margin-max", type=float, help="Margine netto massimo")
     parser.add_argument("--roe-min", type=float, help="ROE minimo")
@@ -67,10 +68,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debt-equity-max", type=float, help="Debt/Equity massimo")
     parser.add_argument("--market-cap-min", type=float, help="Market Cap minimo (miliardi)")
     parser.add_argument("--market-cap-max", type=float, help="Market Cap massimo (miliardi)")
-    parser.add_argument("--div-yield-min", type=float, help="Dividend Yield minimo")
-    parser.add_argument("--div-yield-max", type=float, help="Dividend Yield massimo")
-    parser.add_argument("--rev-growth-min", type=float, help="Crescita ricavi minima")
-    parser.add_argument("--rev-growth-max", type=float, help="Crescita ricavi massima")
+    parser.add_argument("--dividend-yield-min", type=float, help="Dividend Yield minimo")
+    parser.add_argument("--dividend-yield-max", type=float, help="Dividend Yield massimo")
+    parser.add_argument("--revenue-growth-min", type=float, help="Crescita ricavi minima")
+    parser.add_argument("--revenue-growth-max", type=float, help="Crescita ricavi massima")
 
     parser.add_argument(
         "--provider",
@@ -126,20 +127,12 @@ def load_tickers_from_file(path: Path) -> list[str]:
     return tickers
 
 
-_CLI_TO_FIELD = {
-    "op_margin_min": "operating_margin_min", "op_margin_max": "operating_margin_max",
-    "div_yield_min": "dividend_yield_min", "div_yield_max": "dividend_yield_max",
-    "rev_growth_min": "revenue_growth_min", "rev_growth_max": "revenue_growth_max",
-}
-
-
 def build_config(args: argparse.Namespace) -> ScreenerConfig:
     kwargs = {}
-    for cfg_field in ScreenerConfig.field_names():
-        cli_attr = next((k for k, v in _CLI_TO_FIELD.items() if v == cfg_field), cfg_field)
-        val = getattr(args, cli_attr, None)
+    for f in fields(ScreenerConfig):
+        val = getattr(args, f.name, None)
         if val is not None:
-            kwargs[cfg_field] = float(val)
+            kwargs[f.name] = float(val)
     return ScreenerConfig(**kwargs)
 
 

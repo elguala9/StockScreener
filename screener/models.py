@@ -34,13 +34,13 @@ class StockData:
             "Nome": self.name,
             "Settore": self.sector,
             "Industria": self.industry,
-            "Market Cap": _fmt_bn(self.market_cap),
+            "Market Cap": _fmt(self.market_cap, 0),
             "Prezzo": _fmt(self.current_price),
             "P/E": _fmt(self.pe_ratio),
             "P/B": _fmt(self.pb_ratio),
             "P/S": _fmt(self.ps_ratio),
             "EV/EBITDA": _fmt(self.ev_ebitda),
-            "FCF": _fmt_bn(self.fcf),
+            "FCF": _fmt(self.fcf, 0),
             "FCF Yield %": _fmt(self.fcf_yield),
             "Margine Op. %": _fmt(self.operating_margin),
             "Margine Netto %": _fmt(self.net_margin),
@@ -58,13 +58,4 @@ class StockData:
 def _fmt(val: Optional[float], decimals: int = 2) -> str:
     if val is None:
         return ""
-    if isinstance(val, float) and val == int(val):
-        return str(int(val))
     return f"{val:.{decimals}f}"
-
-
-def _fmt_bn(val: Optional[float]) -> str:
-    if val is None:
-        return ""
-    val_bn = val / 1e9
-    return f"{val_bn:.2f}B"
