@@ -224,6 +224,69 @@ class StockScreenerGUI:
 
         messagebox.showinfo("Importato", f"Configurazione importata da {path}")
 
+    def _export_search(self):
+        data = {
+            "exchange": self.exchange_var.get(),
+            "provider": self.provider_var.get(),
+            "api_key": self.api_key_var.get(),
+            "output_path": self.output_var.get(),
+            "filters": {},
+        }
+        for fld, (min_var, max_var) in self._filter_entries.items():
+            lo_s = min_var.get().strip()
+            hi_s = max_var.get().strip()
+            lo = float(lo_s) if lo_s else None
+            hi = float(hi_s) if hi_s else None
+            data["filters"][fld] = {"min": lo, "max": hi}
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+        messagebox.showinfo("Esportato", f"Ricerca esportata in {path}")
+
+    def _import_search(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path) as f:
+            data = json.load(f)
+
+        exchange = data.get("exchange", "")
+        if exchange in self.exchange_map:
+            self.exchange_var.set(exchange)
+
+        provider = data.get("provider", "")
+        if provider in get_provider_names():
+            self.provider_var.set(provider)
+            self._on_provider_change()
+
+        self.api_key_var.set(data.get("api_key", ""))
+
+        output_path = data.get("output_path", "")
+        if output_path:
+            self.output_var.set(output_path)
+
+        filters = data.get("filters", {})
+        for fld, (min_var, max_var) in self._filter_entries.items():
+            if fld in filters and isinstance(filters[fld], dict):
+                bounds = filters[fld]
+                lo = bounds.get("min")
+                hi = bounds.get("max")
+                min_var.set(str(lo) if lo is not None else "")
+                max_var.set(str(hi) if hi is not None else "")
+            else:
+                min_var.set("")
+                max_var.set("")
+
+        messagebox.showinfo("Importato", f"Ricerca importata da {path}")
+
     def _build_action_area(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=(0, 10))
@@ -233,6 +296,8 @@ class StockScreenerGUI:
 
         ttk.Button(frame, text="Export Conf", command=self._export_config).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(frame, text="Import Conf", command=self._import_config).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(frame, text="Export Search", command=self._export_search).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(frame, text="Import Search", command=self._import_search).pack(side=tk.LEFT, padx=(0, 10))
 
         self.progress = ttk.Progressbar(frame, length=400, mode="determinate")
         self.progress.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)

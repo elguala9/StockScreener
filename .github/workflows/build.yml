@@ -1,0 +1,53 @@
+name: Build
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installa dipendenze
+        run: |
+          pip install -r requirements.txt pyinstaller
+      - name: Build GUI (finestra)
+        run: pyinstaller --onefile --windowed --name stock-screener-gui gui.py
+      - name: Build CLI (console)
+        run: pyinstaller --onefile --console --name stock-screener-cli main.py
+      - name: Carica artefatti
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.exe
+
+  linux:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installa dipendenze di sistema
+        run: dnf install -y python3 python3-pip python3-devel python3-tkinter patchelf
+      - name: Installa dipendenze Python
+        run: pip3 install -r requirements.txt pyinstaller
+      - name: Build GUI
+        run: pyinstaller --onefile --name stock-screener-gui gui.py
+      - name: Build CLI
+        run: pyinstaller --onefile --name stock-screener-cli main.py
+      - name: Carica artefatti
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-fedora
+          path: dist/stock-screener-gui
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-fedora-cli
+          path: dist/stock-screener-cli
+          if-no-files-found: error
