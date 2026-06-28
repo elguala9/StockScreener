@@ -21,8 +21,12 @@ def apply_filters(stock: StockData, config: ScreenerConfig) -> bool:
         hi: float | None,
     ):
         nonlocal passed
-        if value is None:
+        if not isinstance(value, (int, float)):
             return
+        if lo is not None and not isinstance(lo, (int, float)):
+            lo = None
+        if hi is not None and not isinstance(hi, (int, float)):
+            hi = None
         if lo is not None and hi is not None:
             ok = lo <= value <= hi
             symbol = "✓" if ok else "✗"

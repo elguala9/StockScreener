@@ -4,9 +4,11 @@ import logging
 import queue
 import threading
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
+from datetime import datetime
 
 import pandas as pd
 
@@ -15,8 +17,21 @@ from screener.fetcher import fetch_all_tickers
 from screener.filters import filter_stocks
 from screener.indices import get_index_names, get_tickers_for_index, get_display_name
 from screener.providers import get_provider, get_provider_names
+from screener.models import StockData
 
 logger = logging.getLogger(__name__)
+
+TEMP_DIR = Path.cwd() / "temp"
+
+
+def _safe_float_from_str(s: str) -> float | None:
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 _SHORT_TO_LONG = {
     "pe": "pe", "pb": "pb", "ps": "ps", "ev_ebitda": "ev_ebitda",
@@ -25,6 +40,74 @@ _SHORT_TO_LONG = {
     "debt_equity": "debt_equity", "market_cap": "market_cap",
     "div_yield": "dividend_yield", "rev_growth": "revenue_growth",
 }
+
+
+def _cache_filename(exchange_key: str, provider_name: str, dt_str: str) -> str:
+    safe_provider = provider_name.replace(" ", "+")
+    safe_dt = dt_str.replace(" ", "T")
+    return f"{exchange_key}_{safe_provider}_{safe_dt}.csv"
+
+
+def _parse_cache_filename(filename: str) -> tuple[str, str, str] | None:
+    stem = filename.replace(".csv", "")
+    parts = stem.split("_", 2)
+    if len(parts) != 3:
+        return None
+    exchange_key, provider_safe, dt_safe = parts
+    provider_name = provider_safe.replace("+", " ")
+    dt_part = dt_safe.replace("T", " ")
+    try:
+        datetime.strptime(dt_part, "%Y-%m-%d %H%M")
+    except ValueError:
+        return None
+    return exchange_key, provider_name, dt_part
+
+
+def _save_cache(stocks: list[StockData], exchange_key: str, provider_name: str, dt_str: str) -> Path:
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    filename = _cache_filename(exchange_key, provider_name, dt_str)
+    path = TEMP_DIR / filename
+    skip = {"passed", "reasons"}
+    rows = [{k: v for k, v in asdict(s).items() if k not in skip} for s in stocks]
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
+    return path
+
+
+def _load_cache(exchange_key: str, provider_name: str, dt_str: str) -> list[StockData] | None:
+    filename = _cache_filename(exchange_key, provider_name, dt_str)
+    path = TEMP_DIR / filename
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return None
+    stocks = []
+    for _, row in df.iterrows():
+        kwargs = {}
+        for col in df.columns:
+            v = row[col]
+            if pd.isna(v):
+                kwargs[col] = None
+            elif col in ("ticker", "name", "sector", "industry", "error"):
+                kwargs[col] = str(v)
+            else:
+                try:
+                    kwargs[col] = float(v)
+                except (ValueError, TypeError):
+                    kwargs[col] = None
+        stocks.append(StockData(**kwargs))
+    return stocks
+
+
+def _list_available_caches() -> list[tuple[str, str, str]]:
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    results = []
+    for f in TEMP_DIR.glob("*.csv"):
+        parsed = _parse_cache_filename(f.name)
+        if parsed:
+            results.append(parsed)
+    return sorted(results, key=lambda x: x[2], reverse=True)
 
 
 class StockScreenerGUI:
@@ -82,6 +165,25 @@ class StockScreenerGUI:
         self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, padx=(0, 5), pady=(4, 0))
         ttk.Button(frame, text="Sfoglia...", command=self._browse_output).grid(row=2, column=3, pady=(4, 0))
 
+        ttk.Separator(frame, orient=tk.HORIZONTAL).grid(
+            row=3, column=0, columnspan=4, sticky=tk.EW, pady=(4, 2))
+
+        self.use_cache_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frame, text="Usa cache",
+                        variable=self.use_cache_var).grid(
+            row=4, column=0, sticky=tk.W, padx=(0, 5), pady=(2, 0))
+
+        ttk.Label(frame, text="Cache disponibili:").grid(row=4, column=1, sticky=tk.W, padx=(0, 5), pady=(2, 0))
+        self.cache_file_var = tk.StringVar()
+        self.cache_file_combo = ttk.Combobox(
+            frame, textvariable=self.cache_file_var,
+            values=[], state="readonly", width=50,
+        )
+        self.cache_file_combo.grid(row=4, column=1, columnspan=2, sticky=tk.W, padx=(0, 5), pady=(2, 0))
+        self.cache_file_combo.bind("<<ComboboxSelected>>", self._on_cache_file_select)
+
+        self._refresh_cache_lists()
+
     def _on_provider_change(self, event=None):
         name = self.provider_var.get()
         p = get_provider(name, api_key="dummy")
@@ -98,6 +200,31 @@ class StockScreenerGUI:
         )
         if path:
             self.output_var.set(path)
+
+    def _refresh_cache_lists(self):
+        caches = _list_available_caches()
+
+        display_names = [
+            f"{exch} - {prov} - {dt}"
+            for exch, prov, dt in caches
+        ]
+        self._all_caches = list(zip(caches, display_names))
+        if hasattr(self, "cache_file_combo"):
+            self.cache_file_combo["values"] = display_names
+
+    def _on_cache_file_select(self, event=None):
+        selected = self.cache_file_var.get()
+        if not selected:
+            return
+        for (exch, prov, dt), display in self._all_caches:
+            if display == selected:
+                display_name = get_display_name(exch)
+                if display_name in self.exchange_map:
+                    self.exchange_var.set(display_name)
+                if prov in get_provider_names():
+                    self.provider_var.set(prov)
+                    self._on_provider_change()
+                break
 
     def _build_filter_area(self, parent):
         frame = ttk.LabelFrame(parent, text="Filtri", padding=10)
@@ -151,10 +278,14 @@ class StockScreenerGUI:
     def _set_defaults(self):
         json_path = Path(__file__).resolve().parent / "default.json"
         if json_path.exists():
-            with open(json_path) as f:
-                defaults = json.load(f)
+            try:
+                with open(json_path) as f:
+                    defaults = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"Errore leggendo {json_path}: {e}")
+                defaults = {}
             for fld, bounds in defaults.items():
-                if fld in self._filter_entries:
+                if isinstance(bounds, dict) and fld in self._filter_entries:
                     min_var, max_var = self._filter_entries[fld]
                     lo = bounds.get("min")
                     hi = bounds.get("max")
@@ -186,10 +317,8 @@ class StockScreenerGUI:
     def _export_config(self):
         data = {}
         for fld, (min_var, max_var) in self._filter_entries.items():
-            lo_s = min_var.get().strip()
-            hi_s = max_var.get().strip()
-            lo = float(lo_s) if lo_s else None
-            hi = float(hi_s) if hi_s else None
+            lo = _safe_float_from_str(min_var.get())
+            hi = _safe_float_from_str(max_var.get())
             data[fld] = {"min": lo, "max": hi}
 
         path = filedialog.asksaveasfilename(
@@ -198,8 +327,12 @@ class StockScreenerGUI:
         )
         if not path:
             return
-        with open(path, "w") as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=4)
+        except OSError as e:
+            messagebox.showerror("Errore", f"Impossibile scrivere {path}: {e}")
+            return
         messagebox.showinfo("Esportato", f"Configurazione esportata in {path}")
 
     def _import_config(self):
@@ -208,8 +341,12 @@ class StockScreenerGUI:
         )
         if not path:
             return
-        with open(path) as f:
-            data = json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Errore", f"Impossibile leggere {path}: {e}")
+            return
 
         for fld, (min_var, max_var) in self._filter_entries.items():
             if fld in data and isinstance(data[fld], dict):
@@ -233,10 +370,8 @@ class StockScreenerGUI:
             "filters": {},
         }
         for fld, (min_var, max_var) in self._filter_entries.items():
-            lo_s = min_var.get().strip()
-            hi_s = max_var.get().strip()
-            lo = float(lo_s) if lo_s else None
-            hi = float(hi_s) if hi_s else None
+            lo = _safe_float_from_str(min_var.get())
+            hi = _safe_float_from_str(max_var.get())
             data["filters"][fld] = {"min": lo, "max": hi}
 
         path = filedialog.asksaveasfilename(
@@ -245,8 +380,12 @@ class StockScreenerGUI:
         )
         if not path:
             return
-        with open(path, "w") as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=4)
+        except OSError as e:
+            messagebox.showerror("Errore", f"Impossibile scrivere {path}: {e}")
+            return
         messagebox.showinfo("Esportato", f"Ricerca esportata in {path}")
 
     def _import_search(self):
@@ -255,8 +394,12 @@ class StockScreenerGUI:
         )
         if not path:
             return
-        with open(path) as f:
-            data = json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Errore", f"Impossibile leggere {path}: {e}")
+            return
 
         exchange = data.get("exchange", "")
         if exchange in self.exchange_map:
@@ -340,10 +483,8 @@ class StockScreenerGUI:
     def _build_config_from_ui(self) -> ScreenerConfig:
         kwargs = {}
         for short, (min_var, max_var) in self._filter_entries.items():
-            lo_s = min_var.get().strip()
-            hi_s = max_var.get().strip()
-            lo = float(lo_s) if lo_s else None
-            hi = float(hi_s) if hi_s else None
+            lo = _safe_float_from_str(min_var.get())
+            hi = _safe_float_from_str(max_var.get())
             long_name = _SHORT_TO_LONG.get(short, short)
             if lo is not None:
                 kwargs[f"{long_name}_min"] = lo
@@ -397,21 +538,43 @@ class StockScreenerGUI:
 
         t = threading.Thread(
             target=self._run_scan,
-            args=(display_name, tickers, config, provider),
+            args=(display_name, exchange_key, tickers, config, provider),
             daemon=True,
         )
         t.start()
 
-    def _run_scan(self, display_name: str, tickers: list[str], config: ScreenerConfig, provider):
+    def _run_scan(self, display_name: str, exchange_key: str, tickers: list[str],
+                  config: ScreenerConfig, provider):
         try:
-            self._progress_queue.put(("status", f"Download {display_name} ({len(tickers)} ticker) con {provider.name}..."))
+            dt_str = datetime.now().strftime("%Y-%m-%d %H%M")
+            provider_name = provider.name
 
-            def progress_cb(done, total):
-                self._progress_queue.put(("progress", done, total))
+            use_cache = self.use_cache_var.get()
+            stocks = None
+            if use_cache:
+                cached_file = self.cache_file_var.get()
+                if cached_file:
+                    for (exch, prov, dt), display in self._all_caches:
+                        if display == cached_file and exch == exchange_key and prov == provider_name:
+                            dt_str = dt
+                            break
+                stocks = _load_cache(exchange_key, provider_name, dt_str)
+                if stocks is not None:
+                    self._progress_queue.put(("status", f"Caricati {len(stocks)} ticker da cache ({date_str})"))
 
-            stocks = fetch_all_tickers(
-                provider, tickers, max_workers=5, delay=1.0, progress_callback=progress_cb,
-            )
+            if stocks is None:
+                self._progress_queue.put(("status", f"Download {display_name} ({len(tickers)} ticker) con {provider_name}..."))
+
+                def progress_cb(done, total):
+                    self._progress_queue.put(("progress", done, total))
+
+                stocks = fetch_all_tickers(
+                    provider, tickers, max_workers=5, delay=1.0, progress_callback=progress_cb,
+                )
+
+                _save_cache(stocks, exchange_key, provider_name, dt_str)
+
+                self.root.after(0, self._refresh_cache_lists)
 
             self._progress_queue.put(("status", "Applicazione filtri..."))
             passed_list, failed_list = filter_stocks(stocks, config)
@@ -453,7 +616,7 @@ class StockScreenerGUI:
 
         if tag == "progress":
             _, done, total = msg
-            pct = int(done / total * 100)
+            pct = int(done / total * 100) if total > 0 else 0
             self.progress["value"] = pct
             self.status_var.set(f"Scaricati {done}/{total} ({pct}%)")
 
@@ -517,6 +680,8 @@ class StockScreenerGUI:
     def _fmt(val, decimals=2):
         if val is None:
             return ""
+        if not isinstance(val, (int, float)):
+            return str(val)
         return f"{val:.{decimals}f}"
 
     def run(self):
