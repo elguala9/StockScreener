@@ -1,0 +1,19 @@
+[project]
+name = "stock-screener"
+version = "0.1.0"
+description = "Stock screener per analisi fondamentale automatica"
+requires-python = ">=3.10"
+dependencies = [
+    "yfinance>=0.2.0",
+    "pandas>=1.5.0",
+    "requests>=2.28.0",
+    "lxml>=4.9.0",
+]
+
+[project.scripts]
+stock-screener = "main:main"
+stock-screener-gui = "gui:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
