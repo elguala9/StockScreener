@@ -58,7 +58,5 @@ fi
 info "push tag in corso..."
 git push GitHub "$TAG"
 
-info "avvio workflow..."
-gh workflow run build.yml 2>/dev/null && ok "workflow avviato!" || info "workflow build.yml non trovato — skip"
-
+info "il workflow partirà automaticamente con il push del tag"
 ok "release $TAG creata e pubblicata!"
