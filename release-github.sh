@@ -30,20 +30,13 @@ with open('pyproject.toml') as f:
 ")
 [ -n "$VERSION" ] || die "versione non trovata in pyproject.toml"
 
+# check if tag already exists (local or remote)
 TAG="v$VERSION"
-
-if gh release view "$TAG" --json tagName 2>/dev/null | grep -q .; then
-    die "la release $TAG esiste già su GitHub — aggiorna la versione in pyproject.toml"
-fi
-
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-    info "rimozione tag locale $TAG..."
-    git tag -d "$TAG"
+    die "il tag $TAG esiste già in locale — aggiorna manualmente la versione in pyproject.toml"
 fi
-
 if git ls-remote --tags "$REMOTE" "refs/tags/$TAG" | grep -q .; then
-    info "rimozione tag remoto $TAG..."
-    git push --delete GitHub "$TAG"
+    die "il tag $TAG esiste già sul remote — aggiorna manualmente la versione in pyproject.toml"
 fi
 
 info "versione: $VERSION"
@@ -65,6 +58,5 @@ fi
 info "push tag in corso..."
 git push GitHub "$TAG"
 
-# workflow avviato automaticamente dal push del tag
-
+info "il workflow partirà automaticamente con il push del tag"
 ok "release $TAG creata e pubblicata!"

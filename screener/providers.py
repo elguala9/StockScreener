@@ -9,6 +9,15 @@ import yfinance as yf
 
 from .models import StockData
 
+
+def _safe_float(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +42,12 @@ class YahooFinanceProvider(DataProvider):
             if not info or (info.get("regularMarketPrice") is None and info.get("currentPrice") is None):
                 return StockData(ticker=ticker, error="Nessun dato disponibile")
 
-            market_cap = info.get("marketCap")
-            current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-            fcf_val = info.get("freeCashflow")
+            market_cap = _safe_float(info.get("marketCap"))
+            current_price = _safe_float(info.get("currentPrice")) or _safe_float(info.get("regularMarketPrice"))
+            fcf_val = _safe_float(info.get("freeCashflow"))
 
-            enterprise_value = info.get("enterpriseValue")
-            ebitda = info.get("ebitda")
+            enterprise_value = _safe_float(info.get("enterpriseValue"))
+            ebitda = _safe_float(info.get("ebitda"))
             ev_ebitda = None
             if enterprise_value is not None and ebitda is not None and ebitda != 0:
                 ev_ebitda = enterprise_value / ebitda
@@ -47,37 +56,37 @@ class YahooFinanceProvider(DataProvider):
             if fcf_val is not None and market_cap is not None and market_cap > 0:
                 fcf_yield = (fcf_val / market_cap) * 100
 
-            operating_margin = info.get("operatingMargins")
+            operating_margin = _safe_float(info.get("operatingMargins"))
             if operating_margin is not None:
                 operating_margin *= 100
 
-            net_margin = info.get("profitMargins")
+            net_margin = _safe_float(info.get("profitMargins"))
             if net_margin is not None:
                 net_margin *= 100
 
-            roe = info.get("returnOnEquity")
+            roe = _safe_float(info.get("returnOnEquity"))
             if roe is not None:
                 roe *= 100
 
-            roic = info.get("returnOnInvestedCapital")
+            roic = _safe_float(info.get("returnOnInvestedCapital"))
             if roic is not None:
                 roic *= 100
 
-            total_debt = info.get("totalDebt")
-            total_equity = info.get("totalStockholderEquity")
+            total_debt = _safe_float(info.get("totalDebt"))
+            total_equity = _safe_float(info.get("totalStockholderEquity"))
             debt_equity = None
             if total_debt is not None and total_equity is not None and total_equity != 0:
                 debt_equity = total_debt / total_equity
 
-            revenue_growth = info.get("revenueGrowth")
+            revenue_growth = _safe_float(info.get("revenueGrowth"))
             if revenue_growth is not None:
                 revenue_growth *= 100
 
-            earnings_growth = info.get("earningsGrowth")
+            earnings_growth = _safe_float(info.get("earningsGrowth"))
             if earnings_growth is not None:
                 earnings_growth *= 100
 
-            dividend_yield = info.get("dividendYield")
+            dividend_yield = _safe_float(info.get("dividendYield"))
             if dividend_yield is not None:
                 dividend_yield *= 100
 
@@ -88,9 +97,9 @@ class YahooFinanceProvider(DataProvider):
                 industry=info.get("industry") or "",
                 market_cap=market_cap,
                 current_price=current_price,
-                pe_ratio=info.get("trailingPE"),
-                pb_ratio=info.get("priceToBook"),
-                ps_ratio=info.get("priceToSalesTrailing12Months"),
+                pe_ratio=_safe_float(info.get("trailingPE")),
+                pb_ratio=_safe_float(info.get("priceToBook")),
+                ps_ratio=_safe_float(info.get("priceToSalesTrailing12Months")),
                 ev_ebitda=ev_ebitda,
                 fcf=fcf_val,
                 fcf_yield=fcf_yield,
@@ -131,29 +140,30 @@ class FinnhubProvider(DataProvider):
     def fetch_ticker(self, ticker: str) -> StockData:
         try:
             profile = self._get("/stock/profile2", {"symbol": ticker})
-            if profile is None or profile.get("ticker") is None:
+            if not isinstance(profile, dict) or profile.get("ticker") is None:
                 return StockData(ticker=ticker, error="Nessun profilo")
 
             metric_data = self._get("/stock/metric", {"symbol": ticker, "metric": "all"})
-            metrics = metric_data.get("metric", {}) if metric_data else {}
+            metrics = metric_data.get("metric", {}) if isinstance(metric_data, dict) else {}
 
             quote = self._get("/quote", {"symbol": ticker})
 
             name = profile.get("name") or ""
             sector = profile.get("finnhubIndustry") or ""
-            market_cap = profile.get("marketCapitalization")
+            quote = quote if isinstance(quote, dict) else {}
+            market_cap = _safe_float(profile.get("marketCapitalization"))
             if market_cap is not None:
                 market_cap *= 1e6
 
-            current_price = quote.get("c") if quote else None
+            current_price = _safe_float(quote.get("c")) if quote else None
             if current_price == 0:
                 current_price = None
 
-            pe = metrics.get("peBasicExclExtraTTM")
-            pb = metrics.get("pbAnnual") or metrics.get("pbQuarterly")
-            ps = metrics.get("psTTM")
-            ev_ebitda = metrics.get("evEbitdaTTM")
-            fcf_per_share = metrics.get("freeCashFlowPerShareTTM")
+            pe = _safe_float(metrics.get("peBasicExclExtraTTM"))
+            pb = _safe_float(metrics.get("pbAnnual")) or _safe_float(metrics.get("pbQuarterly"))
+            ps = _safe_float(metrics.get("psTTM"))
+            ev_ebitda = _safe_float(metrics.get("evEbitdaTTM"))
+            fcf_per_share = _safe_float(metrics.get("freeCashFlowPerShareTTM"))
             fcf_val = None
             if fcf_per_share is not None and market_cap is not None and current_price is not None and current_price > 0:
                 shares = market_cap / current_price
@@ -163,29 +173,29 @@ class FinnhubProvider(DataProvider):
             if fcf_val is not None and market_cap is not None and market_cap > 0:
                 fcf_yield = (fcf_val / market_cap) * 100
 
-            op_margin = metrics.get("operatingMarginTTM")
+            op_margin = _safe_float(metrics.get("operatingMarginTTM"))
             if op_margin is not None:
                 op_margin *= 100
 
-            net_margin = metrics.get("netProfitMarginTTM")
+            net_margin = _safe_float(metrics.get("netProfitMarginTTM"))
             if net_margin is not None:
                 net_margin *= 100
 
-            roe = metrics.get("roeTTM")
+            roe = _safe_float(metrics.get("roeTTM"))
             if roe is not None:
                 roe *= 100
 
-            roic = metrics.get("roicTTM")
+            roic = _safe_float(metrics.get("roicTTM"))
             if roic is not None:
                 roic *= 100
 
-            de = metrics.get("totalDebtTotalEquityTTM")
+            de = _safe_float(metrics.get("totalDebtTotalEquityTTM"))
 
-            rev_growth = metrics.get("revenueGrowthTTM")
+            rev_growth = _safe_float(metrics.get("revenueGrowthTTM"))
             if rev_growth is not None:
                 rev_growth *= 100
 
-            div_yield = metrics.get("dividendYieldIndicatedAnnual")
+            div_yield = _safe_float(metrics.get("dividendYieldIndicatedAnnual"))
             if div_yield is not None:
                 div_yield *= 100
 
@@ -238,48 +248,37 @@ class AlphaVantageProvider(DataProvider):
     def fetch_ticker(self, ticker: str) -> StockData:
         try:
             overview = self._get({"function": "OVERVIEW", "symbol": ticker})
-            if not overview or overview.get("Symbol") is None:
+            if not isinstance(overview, dict) or overview.get("Symbol") is None:
                 return StockData(ticker=ticker, error="Nessun dato")
 
             quote = self._get({"function": "GLOBAL_QUOTE", "symbol": ticker})
             price = None
-            if quote and "Global Quote" in quote:
-                price_str = quote["Global Quote"].get("05. price", "")
-                try:
-                    price = float(price_str) if price_str else None
-                except (ValueError, TypeError):
-                    price = None
+            if quote and isinstance(quote, dict) and "Global Quote" in quote:
+                price = _safe_float(quote["Global Quote"].get("05. price"))
 
-            def _f(key):
-                v = overview.get(key)
-                try:
-                    return float(v) if v and v != "None" else None
-                except (ValueError, TypeError):
-                    return None
-
-            market_cap = _f("MarketCapitalization")
-            pe = _f("PERatio")
-            pb = _f("PriceToBookRatio")
-            ps = _f("PriceToSalesRatioTTM")
-            ev_ebitda = _f("EVToEBITDA")
-            fcf_val = _f("FreeCashFlow")
-            op_margin = _f("OperatingMarginTTM")
+            market_cap = _safe_float(overview.get("MarketCapitalization"))
+            pe = _safe_float(overview.get("PERatio"))
+            pb = _safe_float(overview.get("PriceToBookRatio"))
+            ps = _safe_float(overview.get("PriceToSalesRatioTTM"))
+            ev_ebitda = _safe_float(overview.get("EVToEBITDA"))
+            fcf_val = _safe_float(overview.get("FreeCashFlow"))
+            op_margin = _safe_float(overview.get("OperatingMarginTTM"))
             if op_margin is not None:
                 op_margin *= 100
-            net_margin = _f("ProfitMargin")
+            net_margin = _safe_float(overview.get("ProfitMargin"))
             if net_margin is not None:
                 net_margin *= 100
-            roe = _f("ReturnOnEquityTTM")
+            roe = _safe_float(overview.get("ReturnOnEquityTTM"))
             if roe is not None:
                 roe *= 100
-            roic = _f("ReturnOnInvestedCapitalTTM")
+            roic = _safe_float(overview.get("ReturnOnInvestedCapitalTTM"))
             if roic is not None:
                 roic *= 100
-            debt_equity = _f("DebtToEquityRatio")
-            rev_growth = _f("RevenueGrowth")
+            debt_equity = _safe_float(overview.get("DebtToEquityRatio"))
+            rev_growth = _safe_float(overview.get("RevenueGrowth"))
             if rev_growth is not None:
                 rev_growth *= 100
-            div_yield = _f("DividendYield")
+            div_yield = _safe_float(overview.get("DividendYield"))
             if div_yield is not None:
                 div_yield *= 100
 

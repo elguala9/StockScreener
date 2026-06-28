@@ -4,7 +4,8 @@ import logging
 import sys
 import time
 import traceback
-from dataclasses import fields
+from dataclasses import asdict, fields
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,7 @@ from screener.fetcher import fetch_all_tickers
 from screener.filters import filter_stocks
 from screener.indices import get_tickers_for_index, get_index_names
 from screener.providers import get_provider, get_provider_names
+from screener.models import StockData
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +23,46 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+TEMP_DIR = Path.cwd() / "temp"
+
+
+def _cache_path(exchange_key: str, provider_name: str, dt_str: str) -> Path:
+    safe_provider = provider_name.replace(" ", "+")
+    safe_dt = dt_str.replace(" ", "T")
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return TEMP_DIR / f"{exchange_key}_{safe_provider}_{safe_dt}.csv"
+
+
+def _load_cache(path: Path) -> list[StockData] | None:
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return None
+    stocks = []
+    for _, row in df.iterrows():
+        kwargs = {}
+        for col in df.columns:
+            v = row[col]
+            if pd.isna(v):
+                kwargs[col] = None
+            elif col in ("ticker", "name", "sector", "industry", "error"):
+                kwargs[col] = str(v)
+            else:
+                try:
+                    kwargs[col] = float(v)
+                except (ValueError, TypeError):
+                    kwargs[col] = None
+        stocks.append(StockData(**kwargs))
+    return stocks
+
+
+def _save_cache(stocks: list[StockData], path: Path) -> None:
+    skip = {"passed", "reasons"}
+    rows = [{k: v for k, v in asdict(s).items() if k not in skip} for s in stocks]
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +132,16 @@ def parse_args() -> argparse.Namespace:
         help="Percorso file CSV output (default: output.csv)",
     )
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Ignora la cache e scarica nuovi dati",
+    )
+    parser.add_argument(
+        "--cache-date",
+        default="",
+        help="Data cache da usare (YYYY-MM-DD, default: oggi)",
+    )
+    parser.add_argument(
         "--max-workers",
         type=int,
         default=5,
@@ -127,16 +179,29 @@ def load_tickers_from_file(path: Path) -> list[str]:
     return tickers
 
 
+def _safe_float(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
 def build_config(args: argparse.Namespace) -> ScreenerConfig:
     kwargs = {}
     for f in fields(ScreenerConfig):
         val = getattr(args, f.name, None)
         if val is not None:
-            kwargs[f.name] = float(val)
+            converted = _safe_float(val)
+            if converted is not None:
+                kwargs[f.name] = converted
     return ScreenerConfig(**kwargs)
 
 
 def show_progress(done: int, total: int):
+    if total <= 0:
+        return
     pct = done / total * 100
     bar_len = 30
     filled = int(bar_len * done / total)
@@ -175,6 +240,7 @@ def _main():
             sys.exit(1)
         logger.info(f"Indice: {name.upper()} ({len(tickers)} ticker)")
     else:
+        name = "custom"
         tickers = load_tickers_from_file(args.tickers)
 
     provider = get_provider(args.provider, api_key=args.api_key)
@@ -199,22 +265,35 @@ def _main():
         if v is not None:
             logger.info(f"  {k}: {v}")
 
-    logger.info(f"Avvio download dati ({args.max_workers} workers)...")
-    start = time.time()
+    dt_str = args.cache_date or datetime.now().strftime("%Y-%m-%d %H%M")
+    cache_path = _cache_path(name, provider.name, dt_str)
 
-    stocks = fetch_all_tickers(
-        provider,
-        tickers,
-        max_workers=args.max_workers,
-        delay=args.delay,
-        progress_callback=show_progress,
-    )
+    stocks = None
+    if not args.no_cache:
+        stocks = _load_cache(cache_path)
+        if stocks is not None:
+            logger.info(f"Caricati {len(stocks)} ticker dalla cache ({cache_path})")
 
-    elapsed = time.time() - start
-    fetched = len([s for s in stocks if not s.error])
-    logger.info(
-        f"Download completato in {elapsed:.1f}s. {fetched}/{len(tickers)} ticker con dati validi."
-    )
+    if stocks is None:
+        logger.info(f"Avvio download dati ({args.max_workers} workers)...")
+        start = time.time()
+
+        stocks = fetch_all_tickers(
+            provider,
+            tickers,
+            max_workers=args.max_workers,
+            delay=args.delay,
+            progress_callback=show_progress,
+        )
+
+        elapsed = time.time() - start
+        fetched = len([s for s in stocks if not s.error])
+        logger.info(
+            f"Download completato in {elapsed:.1f}s. {fetched}/{len(tickers)} ticker con dati validi."
+        )
+
+        _save_cache(stocks, cache_path)
+        logger.info(f"Cache salvata: {cache_path}")
 
     passed_list, failed_list = filter_stocks(stocks, config)
 
@@ -233,7 +312,7 @@ def _main():
         df_passed.to_csv(passed_path, index=False, encoding="utf-8-sig")
         logger.info(f"CSV (solo passati) salvato: {passed_path}")
 
-    print(f"\n✅ Scan completato! {len(passed_list)} aziende trovate su {len(stocks)} analizzate.")
+    print(f"\nScan completato! {len(passed_list)} aziende trovate su {len(stocks)} analizzate.")
     if passed_list:
         print("Aziende che passano i filtri:")
         for s in sorted(passed_list, key=lambda s: s.ticker):
@@ -242,9 +321,11 @@ def _main():
     print(f"\nRisultati completi salvati in: {args.output}")
 
 
-def _fmt(val: float | None, decimals: int = 2) -> str:
+def _fmt(val, decimals: int = 2) -> str:
     if val is None:
         return "N/A"
+    if not isinstance(val, (int, float)):
+        return str(val)
     return f"{val:.{decimals}f}"
 
 
