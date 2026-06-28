@@ -182,12 +182,56 @@ class StockScreenerGUI:
             json.dump(dummy, f, indent=4)
         messagebox.showinfo("Dummy Default", f"Creato {path}")
 
+    def _export_config(self):
+        data = {}
+        for fld, (min_var, max_var) in self._filter_entries.items():
+            lo_s = min_var.get().strip()
+            hi_s = max_var.get().strip()
+            lo = float(lo_s) if lo_s else None
+            hi = float(hi_s) if hi_s else None
+            data[fld] = {"min": lo, "max": hi}
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+        messagebox.showinfo("Esportato", f"Configurazione esportata in {path}")
+
+    def _import_config(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path) as f:
+            data = json.load(f)
+
+        for fld, (min_var, max_var) in self._filter_entries.items():
+            if fld in data and isinstance(data[fld], dict):
+                bounds = data[fld]
+                lo = bounds.get("min")
+                hi = bounds.get("max")
+                min_var.set(str(lo) if lo is not None else "")
+                max_var.set(str(hi) if hi is not None else "")
+            else:
+                min_var.set("")
+                max_var.set("")
+
+        messagebox.showinfo("Importato", f"Configurazione importata da {path}")
+
     def _build_action_area(self, parent):
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=(0, 10))
 
         self.scan_btn = ttk.Button(frame, text="Avvia Scan", command=self._start_scan)
         self.scan_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Button(frame, text="Export Conf", command=self._export_config).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(frame, text="Import Conf", command=self._import_config).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Button(frame, text="Dummy Default", command=self._create_dummy_json).pack(side=tk.LEFT, padx=(0, 10))
 
