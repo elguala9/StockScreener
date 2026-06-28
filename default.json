@@ -1,0 +1,12 @@
+{
+    "pe": {"min": null, "max": 15},
+    "pb": {"min": null, "max": 1.5},
+    "ps": {"min": null, "max": 2},
+    "ev_ebitda": {"min": null, "max": 10},
+    "fcf_yield": {"min": 3, "max": null},
+    "op_margin": {"min": 5, "max": null},
+    "roe": {"min": 10, "max": null},
+    "roic": {"min": 8, "max": null},
+    "debt_equity": {"min": null, "max": 1},
+    "market_cap": {"min": 0.5, "max": null}
+}
